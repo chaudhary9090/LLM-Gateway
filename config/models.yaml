@@ -1,0 +1,63 @@
+# Model Catalog and Routing Configuration
+version: "1.0"
+
+# Model definitions with provider mappings and cost configurations
+# Pricing is in USD per 1,000 tokens
+models:
+  gpt-4o-mini:
+    description: "Fast, lightweight model for general high-volume tasks"
+    tier: "cheap"
+    max_tokens: 16384
+    capabilities: ["chat", "code", "json"]
+    input_cost_per_1k: 0.00015
+    output_cost_per_1k: 0.00060
+    providers:
+      primary: "mock-primary"
+      fallbacks: ["mock-secondary", "openai-main"]
+
+  gpt-4o:
+    description: "High-intelligence multimodal flagship model"
+    tier: "balanced"
+    max_tokens: 4096
+    capabilities: ["chat", "reasoning", "vision", "code"]
+    input_cost_per_1k: 0.00250
+    output_cost_per_1k: 0.01000
+    providers:
+      primary: "openai-main"
+      fallbacks: ["openai-backup", "mock-primary"]
+
+  claude-3-5-sonnet:
+    description: "State of the art reasoning and coding model"
+    tier: "powerful"
+    max_tokens: 8192
+    capabilities: ["chat", "reasoning", "coding", "analysis"]
+    input_cost_per_1k: 0.00300
+    output_cost_per_1k: 0.01500
+    providers:
+      primary: "openai-main"
+      fallbacks: ["openai-backup", "mock-primary"]
+
+  mock-model:
+    description: "Deterministic mock model for local dev, load testing, and CI"
+    tier: "cheap"
+    max_tokens: 4096
+    capabilities: ["chat", "code", "mock"]
+    input_cost_per_1k: 0.00010
+    output_cost_per_1k: 0.00020
+    providers:
+      primary: "mock-primary"
+      fallbacks: ["mock-secondary"]
+
+# Routing Aliases
+aliases:
+  cheap: "mock-model"
+  balanced: "gpt-4o-mini"
+  powerful: "gpt-4o"
+  default: "mock-model"
+
+# Task-type routing rules
+task_routing:
+  summarization: "cheap"
+  coding: "powerful"
+  chat: "balanced"
+  extraction: "cheap"

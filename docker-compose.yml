@@ -1,0 +1,54 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llm_gateway_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=LLM-Gateway
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - HOST=0.0.0.0
+      - PORT=8000
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_ENABLED=true
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/gateway.db
+      - MOCK_PRIMARY_ENABLED=true
+      - MOCK_SECONDARY_ENABLED=true
+      - OPENAI_MAIN_ENABLED=false
+      - OPENAI_BACKUP_ENABLED=false
+    volumes:
+      - gateway_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gateway_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: llm_gateway_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - gateway_net
+
+volumes:
+  gateway_data:
+  redis_data:
+
+networks:
+  gateway_net:
+    driver: bridge

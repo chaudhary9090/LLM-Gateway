@@ -1,0 +1,205 @@
+"""Pydantic v2 schemas for API requests and normalized responses."""
+
+import time
+import uuid
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, Field, field_validator
+
+RoleType = Literal["system", "user", "assistant"]
+
+
+class ChatMessage(BaseModel):
+    """Single chat message representing role and textual content."""
+
+    role: RoleType = Field(..., description="Role of the message author")
+    content: str = Field(
+        ..., min_length=1, max_length=100000, description="Text content of the message"
+    )
+
+
+class ChatCompletionRequest(BaseModel):
+    """Normalized chat completion request payload."""
+
+    model: str = Field(..., min_length=1, description="Model identifier or routing alias")
+    messages: List[ChatMessage] = Field(
+        ..., min_length=1, description="List of messages in conversation"
+    )
+    temperature: Optional[float] = Field(
+        default=0.7, ge=0.0, le=2.0, description="Sampling temperature"
+    )
+    max_tokens: Optional[int] = Field(
+        default=1024, gt=0, le=32768, description="Max tokens to generate"
+    )
+    timeout: Optional[float] = Field(
+        default=None, gt=0.0, le=120.0, description="Optional request timeout in seconds"
+    )
+    cache: Optional[bool] = Field(
+        default=True, description="Enable or bypass Redis caching for this request"
+    )
+    task_type: Optional[str] = Field(
+        default=None, description="Optional hint for routing rules (e.g. summarization, coding)"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default_factory=dict, description="Arbitrary client metadata"
+    )
+
+    @field_validator("messages")
+    @classmethod
+    def validate_messages(cls, messages: List[ChatMessage]) -> List[ChatMessage]:
+        if not messages:
+            raise ValueError("messages list must contain at least one message")
+        return messages
+
+
+class UsageInfo(BaseModel):
+    """Token usage tracking and cost estimation."""
+
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    is_estimated: bool = Field(
+        default=False, description="True if tokens were heuristically estimated"
+    )
+
+
+class ChoiceMessage(BaseModel):
+    """Choice message contained in normalized response."""
+
+    role: str = "assistant"
+    content: str = ""
+
+
+class ChatChoice(BaseModel):
+    """Individual completion choice."""
+
+    index: int = 0
+    message: ChoiceMessage
+    finish_reason: str = "stop"
+
+
+class ChatCompletionResponse(BaseModel):
+    """Normalized response schema returned across all providers and cached responses."""
+
+    id: str = Field(default_factory=lambda: f"chatcmpl-{uuid.uuid4().hex[:12]}")
+    request_id: str
+    object: str = "chat.completion"
+    created: int = Field(default_factory=lambda: int(time.time()))
+    model: str
+    provider: str
+    choices: List[ChatChoice]
+    usage: UsageInfo
+    cached: bool = False
+    latency_ms: float = 0.0
+    cost_usd: Optional[float] = None
+    routing_reason: Optional[str] = None
+
+
+class ErrorDetail(BaseModel):
+    """Structured error payload."""
+
+    code: str
+    message: str
+    request_id: str
+    is_retryable: bool = False
+    details: Optional[Dict[str, Any]] = None
+
+
+class ErrorResponse(BaseModel):
+    """Standardized API error response body."""
+
+    error: ErrorDetail
+
+
+class HealthResponse(BaseModel):
+    """Application health status."""
+
+    status: str = "ok"
+    app: str
+    environment: str
+    timestamp: float
+
+
+class DependencyStatus(BaseModel):
+    """Individual component readiness."""
+
+    status: str
+    message: Optional[str] = None
+
+
+class ReadyResponse(BaseModel):
+    """Application readiness status."""
+
+    status: str
+    dependencies: Dict[str, DependencyStatus]
+
+
+class ProviderSummary(BaseModel):
+    """Safe provider configuration and status report."""
+
+    name: str
+    type: str
+    enabled: bool
+    healthy: bool
+    circuit_state: str
+    failure_count: int
+
+
+class ModelConfigSummary(BaseModel):
+    """Safe model metadata and cost config report."""
+
+    name: str
+    tier: str
+    capabilities: List[str]
+    primary_provider: str
+    fallback_providers: List[str]
+    input_cost_per_1k: float
+    output_cost_per_1k: float
+
+
+class GatewayStatsResponse(BaseModel):
+    """Aggregated operational statistics."""
+
+    total_requests: int
+    successful_requests: int
+    failed_requests: int
+    cache_hits: int
+    cache_misses: int
+    cache_hit_rate: float
+    fallback_count: int
+    latency_p50_ms: float
+    latency_p95_ms: float
+    latency_p99_ms: float
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+    total_estimated_cost_usd: float
+
+
+class RequestLogItem(BaseModel):
+    """Single request log record for audit endpoints."""
+
+    request_id: str
+    timestamp: str
+    model: str
+    provider: str
+    status: str
+    cache_hit: bool
+    attempt_count: int
+    fallback_count: int
+    latency_ms: float
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+    routing_reason: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class PaginatedLogsResponse(BaseModel):
+    """Paginated list of request logs."""
+
+    items: List[RequestLogItem]
+    total: int
+    page: int
+    page_size: int
