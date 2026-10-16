@@ -6,8 +6,8 @@ import random
 import sys
 import time
 from typing import Any, Dict, List
-import httpx
 
+import httpx
 
 PROMPT_POOL = [
     # Fixed repeated prompts (~30% of total volume)

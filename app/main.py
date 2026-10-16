@@ -22,6 +22,7 @@ from app.providers.registry import build_provider_registry
 from app.resilience.circuit_breaker import CircuitBreakerRegistry
 from app.resilience.fallback import FallbackOrchestrator
 from app.routing.router import ModelRouter
+from app.services.discovery import discover_local_models
 from app.services.gateway import GatewayService
 
 
@@ -55,7 +56,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # 5. Initialize model router
-    router = ModelRouter(config_path=settings.models_config_path)
+    router = ModelRouter(
+        config_path=settings.models_config_path,
+        offline_mode=settings.offline_mode,
+    )
+    # Auto-detect Ollama / local engines at startup
+    await discover_local_models(router=router, settings=settings)
 
     # 6. Initialize cache layer with resilient fallback
     cache: BaseCache
@@ -93,12 +99,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Gateway service terminated cleanly.")
 
 
+TAGS_METADATA = [
+    {
+        "name": "Chat Completions",
+        "description": "Unified OpenAI-compatible chat completion endpoints with automatic model routing, Redis response caching, single-flight locking, and circuit breaker fallback.",
+    },
+    {
+        "name": "System & Readiness",
+        "description": "Liveness probes, dependency health checks (DB, Redis, upstream providers), and offline mode indicators.",
+    },
+    {
+        "name": "Observability & Telemetry",
+        "description": "Aggregated request stats, latency percentiles (p50/p95/p99), token cost accounting, and Prometheus metrics exposition.",
+    },
+    {
+        "name": "Providers & Models",
+        "description": "Registry of upstream provider health/circuit states and declarative model catalogs.",
+    },
+    {
+        "name": "Audit Logging",
+        "description": "Server-side paginated request logs with metadata, token counts, and sanitized payloads.",
+    },
+]
+
+
 def create_app() -> FastAPI:
     """Builds and configures the FastAPI application instance."""
     app = FastAPI(
-        title=settings.app_name,
-        description="Unified LLM Gateway with caching, routing, circuit breaking, and automatic fallback.",
-        version="0.1.0",
+        title=f"{settings.app_name} API",
+        description=(
+            "**Production-Grade Unified AI Router, Cache & Resilience Gateway**\n\n"
+            "- **Unified API**: OpenAI-compatible format for all models and providers\n"
+            "- **Offline First**: Native Ollama/LM Studio local engine integration and strict `OFFLINE_MODE`\n"
+            "- **Resilient**: 3-state circuit breakers with automatic provider fallback\n"
+            "- **Observability**: Prometheus metrics, SQLite audit logs, and real-time cost estimation"
+        ),
+        version="0.2.0",
+        openapi_tags=TAGS_METADATA,
         lifespan=lifespan,
     )
 
@@ -130,8 +167,12 @@ def create_app() -> FastAPI:
     async def gateway_exception_handler(request: Request, exc: GatewayException):
         req_id = getattr(request.state, "request_id", f"req-{uuid.uuid4().hex[:8]}")
         logger.warning(f"GatewayException handled: {exc.error_code} - {exc.message}")
+        headers = {}
+        if exc.details and "retry_after" in exc.details:
+            headers["Retry-After"] = str(exc.details["retry_after"])
         return JSONResponse(
             status_code=exc.status_code,
+            headers=headers,
             content=ErrorResponse(
                 error=ErrorDetail(
                     code=exc.error_code,
@@ -142,6 +183,7 @@ def create_app() -> FastAPI:
                 )
             ).model_dump(mode="json"),
         )
+
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):

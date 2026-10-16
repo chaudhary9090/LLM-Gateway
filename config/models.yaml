@@ -13,7 +13,7 @@ models:
     output_cost_per_1k: 0.00060
     providers:
       primary: "mock-primary"
-      fallbacks: ["mock-secondary", "openai-main"]
+      fallbacks: ["local", "mock-secondary", "openai-main"]
 
   gpt-4o:
     description: "High-intelligence multimodal flagship model"
@@ -24,7 +24,7 @@ models:
     output_cost_per_1k: 0.01000
     providers:
       primary: "openai-main"
-      fallbacks: ["openai-backup", "mock-primary"]
+      fallbacks: ["openai-backup", "local", "mock-primary"]
 
   claude-3-5-sonnet:
     description: "State of the art reasoning and coding model"
@@ -35,7 +35,7 @@ models:
     output_cost_per_1k: 0.01500
     providers:
       primary: "openai-main"
-      fallbacks: ["openai-backup", "mock-primary"]
+      fallbacks: ["openai-backup", "local", "mock-primary"]
 
   mock-model:
     description: "Deterministic mock model for local dev, load testing, and CI"
@@ -46,7 +46,40 @@ models:
     output_cost_per_1k: 0.00020
     providers:
       primary: "mock-primary"
-      fallbacks: ["mock-secondary"]
+      fallbacks: ["local", "mock-secondary"]
+
+  local-model:
+    description: "Local offline LLM for zero-cost private inference (Ollama/LM Studio/vLLM)"
+    tier: "cheap"
+    max_tokens: 8192
+    capabilities: ["chat", "code", "local", "offline"]
+    input_cost_per_1k: 0.0
+    output_cost_per_1k: 0.0
+    providers:
+      primary: "local"
+      fallbacks: ["mock-primary", "mock-secondary"]
+
+  llama3.2:
+    description: "Meta Llama 3.2 lightweight local model"
+    tier: "cheap"
+    max_tokens: 8192
+    capabilities: ["chat", "code", "local", "offline"]
+    input_cost_per_1k: 0.0
+    output_cost_per_1k: 0.0
+    providers:
+      primary: "local"
+      fallbacks: ["mock-primary", "mock-secondary"]
+
+  mistral:
+    description: "Mistral 7B general reasoning local model"
+    tier: "balanced"
+    max_tokens: 8192
+    capabilities: ["chat", "reasoning", "local", "offline"]
+    input_cost_per_1k: 0.0
+    output_cost_per_1k: 0.0
+    providers:
+      primary: "local"
+      fallbacks: ["mock-primary", "mock-secondary"]
 
 # Routing Aliases
 aliases:

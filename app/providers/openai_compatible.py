@@ -211,3 +211,24 @@ class OpenAICompatibleProvider(BaseProvider):
         finally:
             if not self._client:
                 await client.aclose()
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """Calls upstream /embeddings endpoint."""
+        client = self._get_client(timeout=self.timeout_seconds)
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        try:
+            url = f"{self.base_url}/embeddings"
+            res = await client.post(url, json={"input": texts, "model": model}, headers=headers)
+            if res.status_code == 200:
+                data = res.json().get("data", [])
+                return [item.get("embedding", []) for item in data]
+            raise ProviderServerError(
+                provider_name=self.name,
+                message=f"Upstream embeddings returned HTTP {res.status_code}",
+            )
+        finally:
+            if not self._client:
+                await client.aclose()

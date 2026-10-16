@@ -5,12 +5,12 @@ import time
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import logging
+
 logging.getLogger("llm_gateway").setLevel(logging.WARNING)
 
-from app.api.schemas import ChatCompletionRequest, ChatMessage
-from app.cache.keys import generate_cache_key
-from app.resilience.circuit_breaker import CircuitBreaker
-from app.routing.router import ModelRouter
+from app.api.schemas import ChatCompletionRequest, ChatMessage  # noqa: E402
+from app.cache.keys import generate_cache_key  # noqa: E402
+from app.routing.router import ModelRouter  # noqa: E402
 
 
 def benchmark_cache_key_generation(iterations: int = 10000):

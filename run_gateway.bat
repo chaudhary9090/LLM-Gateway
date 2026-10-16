@@ -10,13 +10,15 @@ echo.
 
 cd /d "%~dp0"
 
-rem Check if virtual environment exists
+rem Check if virtual environment exists; if not, automatically setup
 if not exist ".venv\Scripts\python.exe" (
-    echo [ERROR] Virtual environment .venv was not found!
-    echo Please run install_requirements.bat first to install all requirements.
-    echo.
-    pause
-    exit /b 1
+    echo [NOTICE] Virtual environment .venv not found. Auto-running setup...
+    call install_requirements.bat
+    if errorlevel 1 (
+        echo [ERROR] Setup failed!
+        pause
+        exit /b 1
+    )
 )
 
 rem Create .env from template if missing

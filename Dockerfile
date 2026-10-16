@@ -22,7 +22,8 @@ RUN pip install --upgrade pip && \
 COPY app/ ./app/
 COPY config/ ./config/
 COPY scripts/ ./scripts/
-COPY README.md .env.example ./
+COPY gateway_client/ ./gateway_client/
+COPY gateway.py README.md .env.example ./
 
 # Security: Create and switch to non-root user
 RUN useradd -m -u 1000 appuser && \

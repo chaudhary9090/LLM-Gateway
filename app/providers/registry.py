@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 
 from app.core.config import Settings
 from app.providers.base import BaseProvider
+from app.providers.local import LocalProvider
 from app.providers.mock import MockProvider
 from app.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -61,6 +62,16 @@ def build_provider_registry(settings: Settings) -> ProviderRegistry:
         failure_rate=settings.mock_secondary_failure_rate,
     )
     registry.register(mock_secondary)
+
+    # Register Local Provider (Ollama / LM Studio / llama.cpp / vLLM)
+    local_provider = LocalProvider(
+        name="local",
+        base_url=settings.local_base_url,
+        default_model=settings.local_models.split(",")[0].strip() if settings.local_models else "llama3.2",
+        timeout_seconds=settings.local_timeout_seconds,
+        enabled=settings.local_enabled,
+    )
+    registry.register(local_provider)
 
     # Register OpenAI Main Provider
     openai_main = OpenAICompatibleProvider(

@@ -14,12 +14,23 @@ from app.routing.policies import ModelCatalogEntry, RoutingDecision
 class ModelRouter:
     """Evaluates request attributes and resolves models to primary and fallback providers."""
 
-    def __init__(self, config_path: str = "config/models.yaml"):
+    def __init__(self, config_path: str = "config/models.yaml", offline_mode: bool = False):
         self.config_path = config_path
+        self.offline_mode = offline_mode
         self.models: Dict[str, ModelCatalogEntry] = {}
         self.aliases: Dict[str, str] = {}
         self.task_routing: Dict[str, str] = {}
         self._load_config()
+
+    def reload_config(self) -> None:
+        """Reloads configuration from models.yaml without restarting."""
+        self._load_config()
+        logger.info(f"ModelRouter reloaded configuration from {self.config_path}")
+
+    def register_model(self, model_entry: ModelCatalogEntry) -> None:
+        """Dynamically registers or updates a model in the catalog."""
+        self.models[model_entry.name] = model_entry
+        logger.debug(f"Registered model '{model_entry.name}' into router catalog")
 
     def _load_config(self) -> None:
         """Loads configuration from YAML file with resilient defaults."""
@@ -114,8 +125,20 @@ class ModelRouter:
         # 2. Check alias mapping
         if target_model_name in self.aliases:
             resolved = self.aliases[target_model_name]
-            reason = f"alias:{target_model_name}->{resolved}"
-            target_model_name = resolved
+            # Route "cheap" to local model if local provider is enabled and operational
+            if (
+                target_model_name == "cheap"
+                and provider_enabled_checker
+                and provider_enabled_checker("local")
+                and (not circuit_open_checker or not circuit_open_checker("local"))
+                and ("local-model" in self.models or "llama3.2" in self.models)
+            ):
+                local_choice = "local-model" if "local-model" in self.models else "llama3.2"
+                reason = f"alias:cheap->local_preferred->{local_choice}"
+                target_model_name = local_choice
+            else:
+                reason = f"alias:{target_model_name}->{resolved}"
+                target_model_name = resolved
 
         # 3. Check prompt length rule: if prompt > 2000 words and using cheap model, escalate if balanced available
         total_words = sum(len(m.content.split()) for m in request.messages)
@@ -150,9 +173,14 @@ class ModelRouter:
             p for p in model_entry.fallback_providers if p != model_entry.primary_provider
         ]
 
-        # 6. Filter by enabled status and circuit breaker state
+        # 6. Filter by enabled status, circuit breaker state, and offline mode
         eligible_providers = []
         for provider_name in candidate_providers:
+            if self.offline_mode and provider_name not in ("local", "mock-primary", "mock-secondary"):
+                logger.debug(
+                    f"Router skipping non-local provider '{provider_name}' due to OFFLINE_MODE"
+                )
+                continue
             if provider_enabled_checker and not provider_enabled_checker(provider_name):
                 continue
             if circuit_open_checker and circuit_open_checker(provider_name):

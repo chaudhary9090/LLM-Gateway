@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # CORS Configuration
     cors_origins: List[str] = Field(
-        default_factory=lambda: ["http://localhost:3000", "http://localhost:8000"]
+        default_factory=lambda: ["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"]
     )
 
     # Redis Cache Configuration
@@ -68,6 +68,26 @@ class Settings(BaseSettings):
     mock_secondary_enabled: bool = True
     mock_secondary_latency_ms: int = 25
     mock_secondary_failure_rate: float = 0.0
+
+    # Offline Mode & Local Provider (Ollama / LM Studio / llama.cpp / vLLM)
+    offline_mode: bool = False
+    local_enabled: bool = True
+    local_base_url: str = "http://localhost:11434/v1"
+    local_models: str = "llama3.2,mistral,qwen2.5,local-model"
+    local_timeout_seconds: float = 30.0
+    ollama_auto_discover: bool = True
+
+    # Guardrails settings
+    guardrails_enabled: bool = True
+    guardrails_mode: str = "flag"  # "allow", "flag", "block"
+    max_prompt_chars: int = 50000
+
+    # Semantic Cache settings
+    semantic_cache_enabled: bool = True
+    semantic_cache_threshold: float = 0.88
+
+    # Tracing (OpenTelemetry)
+    otel_enabled: bool = False
 
     # Config file paths
     models_config_path: str = "config/models.yaml"

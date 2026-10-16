@@ -50,12 +50,18 @@ class MockProvider(BaseProvider):
         start_time = time.perf_counter()
 
         # Check for simulated failures passed via request metadata or provider state
-        simulate_error = (request.metadata or {}).get("simulate_error") or self.forced_failure
+        simulate_error = self.forced_failure
+        sim_meta = (request.metadata or {}).get("simulate_error")
+        if sim_meta and not simulate_error:
+            target_prov = (request.metadata or {}).get("target_provider")
+            if not target_prov or target_prov == self.name:
+                simulate_error = sim_meta
 
         # Random failure injection based on failure_rate if not forced
         if not simulate_error and self.failure_rate > 0.0:
             if random.random() < self.failure_rate:
                 simulate_error = "500"
+
 
         # Apply simulated latency
         delay_seconds = self.latency_ms / 1000.0
@@ -121,3 +127,20 @@ class MockProvider(BaseProvider):
 
     async def health_check(self) -> bool:
         return self.enabled and self.healthy_status
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """Generates deterministic mock embedding vectors."""
+        import hashlib
+        import math
+
+        results = []
+        for text in texts:
+            dim = 128
+            vec = [0.0] * dim
+            h = hashlib.sha256(text.encode("utf-8")).digest()
+            for i in range(dim):
+                byte_val = h[i % len(h)]
+                vec[i] = ((byte_val / 255.0) * 2.0) - 1.0
+            norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+            results.append([round(x / norm, 6) for x in vec])
+        return results

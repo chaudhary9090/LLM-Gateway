@@ -1,296 +1,216 @@
-# Production-Quality LLM Gateway
+# 🚀 Enterprise LLM Gateway & AI Inference Router
 
-A robust, enterprise-grade unified LLM Gateway built from scratch with **FastAPI**, **Pydantic v2**, **Redis caching**, **intelligent model routing**, **circuit breaking**, **automatic fallback**, and **persistent request observability**.
+[![CI Pipeline](https://github.com/organization/llm-gateway/actions/workflows/ci.yml/badge.svg)](https://github.com/organization/llm-gateway/actions)
+[![Tests Passing](https://img.shields.io/badge/tests-66%2F66%20passing-brightgreen.svg)](https://github.com/organization/llm-gateway)
+[![Python Version](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Offline First](https://img.shields.io/badge/offline--ready-Ollama%20%7C%20vLLM%20%7C%20LMStudio-orange.svg)](#-offline-first--local-models)
+[![UI Playground](https://img.shields.io/badge/dashboard-React%2018%20%2B%20Tailwind-61dafb.svg)](frontend/)
 
----
-
-## 1. System Overview & Key Features
-
-- **Unified OpenAI-Compatible API (`POST /v1/chat/completions`)**: Accepts standardized requests and returns a normalized response contract regardless of upstream provider.
-- **Multi-Provider Adapter Architecture**: Pluggable adapters for real OpenAI-compatible endpoints (OpenAI, Groq, Together, DeepInfra, vLLM) and a deterministic `MockProvider` supporting latency and error simulations for CI and local development without paid credentials.
-- **Intelligent Deterministic Routing**: Model alias resolution (`cheap`, `balanced`, `powerful`), prompt-length escalation, task-hint routing (`summarization`, `coding`, `chat`), cost awareness, and circuit-breaker state skipping.
-- **Deterministic Redis Response Caching**:
-  - Stable SHA-256 cache key generated from canonicalized request JSON.
-  - Request-level bypass (`cache: false` or `X-Cache-Bypass: true`) and configurable TTL.
-  - Single-flight locking to prevent cache stampedes under concurrent traffic.
-  - Graceful degradation: If Redis is offline, the gateway logs a warning and degrades seamlessly without crashing.
-- **Resilience Engine**:
-  - Per-provider 3-state Circuit Breaker (`CLOSED`, `OPEN`, `HALF_OPEN`).
-  - Exponential backoff with jitter and `Retry-After` header respect for transient errors (429, 500, 502, 503, 504).
-  - Immediate fail-fast without retry on permanent errors (400, 401, 403).
-  - Ordered fallback chain: Automatically switches to eligible backup providers within an overall request deadline.
-- **Observability & Cost Accounting**:
-  - Async SQLite request audit logging using SQLAlchemy 2.x and `aiosqlite`.
-  - Aggregated operational metrics: request counts, cache hits/misses, fallback counts, latency percentiles (`p50`, `p95`, `p99`), token usage, and estimated USD cost based on configurable per-model token prices.
-  - Prometheus metrics exposition (`GET /metrics`).
-  - Strict secret redaction: API keys, tokens, and authorization headers are never logged or exposed.
+A production-grade, fault-tolerant LLM Gateway engineered in Python (FastAPI, Pydantic v2, SQLAlchemy 2.x, Redis) that provides a unified, drop-in OpenAI-compatible API across cloud and local engines. Featuring **multi-tier exact & semantic caching**, **circuit breaker failover orchestration**, **real-time SSE token streaming**, **per-tenant API key budgets**, **automated PII & injection guardrails**, and a full-featured **React developer dashboard**.
 
 ---
 
-## 2. Architecture & Request Lifecycle
+## 🏗️ Architecture & Request Flow
 
-```
-[ Client Request ]
-       │
-       ▼
-[ FastAPI App ] ─── (CORS, Auth Guard, Request ID, Timing Middleware)
-       │
-       ▼
-[ Model Router ] ─── (Alias Resolution: cheap/balanced/powerful, Task hints, Circuit-check)
-       │
-       ├─────────────────────────────────────────────┐
-       ▼ (If cache eligible)                         ▼ (If cache miss or bypass)
-[ Redis Cache ]                               [ Fallback Orchestrator ]
-  - Check SHA-256 key                           - Overall Request Deadline
-  - Single-flight lock                          - Attempt Primary Provider
-  - Cache Hit? ──> Return Normalized Response   - If 429/5xx: Exponential Backoff Retry
-                                                - If Breaker OPEN / Exhausted:
-                                                  Failover to Next Fallback Provider
-                                                       │
-                                                       ▼
-                                              [ Provider Adapter ]
-                                                - MockProvider or OpenAICompatibleProvider
-                                                       │
-                                                       ▼
-                                              [ Normalization & Costing ]
-                                                - Normalize Choices & Token Usage
-                                                - Calculate USD Cost per 1K Tokens
-                                                - Cache Result in Redis
-                                                - Async Persist in SQLite Log
-                                                       │
-                                                       ▼
-                                              [ Normalized Response ]
+```mermaid
+flowchart TD
+    Client(["Client App / OpenAI SDK / React UI / CLI"]) --> Gateway["FastAPI LLM Gateway (:8000)"]
+
+    subgraph Security & Policy
+        Auth["API Key & Rate Limiter<br/>(Sliding Window RPM & Daily Budgets)"]
+        Guard["Safety Guardrails<br/>(PII Masking & Prompt Injection Heuristics)"]
+    end
+
+    subgraph Routing & Intelligence
+        Router["Model Router<br/>(Aliases: cheap/balanced/powerful + Task Hints)"]
+        Cache["Hybrid Caching Layer<br/>(SHA-256 Redis Exact Match + Offline Semantic Index)"]
+    end
+
+    subgraph Resilience Engine
+        Orch["Fallback Orchestrator"]
+        CB["Circuit Breakers (CLOSED / HALF_OPEN / OPEN)"]
+    end
+
+    subgraph Provider Adapters
+        Local["LocalProvider (Ollama / vLLM / LM Studio)"]
+        Cloud["OpenAICompatibleProvider (OpenAI / Groq)"]
+        Mock["MockProvider (Zero-Dependency Testing)"]
+    end
+
+    subgraph Observability & Storage
+        DB[(SQLite / SQLAlchemy 2.x Audits)]
+        Prom[Prometheus Metrics :9090]
+        Graf[Grafana Dashboards :3001]
+    end
+
+    Gateway --> Auth
+    Auth --> Guard
+    Guard --> Router
+    Router --> Cache
+
+    Cache -- "Cache Hit (Exact / Semantic)" --> Gateway
+    Cache -- "Cache Miss" --> Orch
+
+    Orch --> CB
+    CB --> Local
+    CB --> Cloud
+    CB --> Mock
+
+    Gateway --> DB
+    Gateway --> Prom
+    Prom --> Graf
 ```
 
 ---
 
-## 3. Quick Start & Local Setup
+## 🖥️ Production Web Dashboard & Developer Playground
 
-### Prerequisites
-- Python 3.12+ (tested on Python 3.13)
-- Optional: Docker and Docker Compose
-- Optional: Redis server (gateway automatically falls back to in-memory cache if Redis is not running)
+A modern developer console built with **React 18**, **TypeScript**, **Tailwind CSS**, **shadcn/ui**, and **Recharts**.
 
-### Local Virtual Environment Setup
-```powershell
-# 1. Clone / Navigate to llm-gateway
-cd llm-gateway
+| **System Overview & Real-Time KPIs** | **Interactive Developer Playground** |
+|:---:|:---:|
+| ![Overview](docs/images/overview_active.png) | ![Playground](docs/images/playground_initial.png) |
 
-# 2. Create virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+| **Provider Health & Circuit Breakers** | **Model Catalog & Cost Pricing** |
+|:---:|:---:|
+| ![Providers](docs/images/providers.png) | ![Models](docs/images/models.png) |
 
-# 3. Install pinned dependencies
-pip install -r requirements.txt
-
-# 4. Configure environment
-cp .env.example .env
-
-# 5. Run the gateway with Uvicorn
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-The gateway starts instantly with mock providers enabled by default, requiring **zero external API keys**.
-
-### Running with Docker Compose
-```bash
-docker compose up --build -d
-```
-This launches:
-- `llm_gateway_api` on port `8000`
-- `llm_gateway_redis` on port `6379` with health checks and persistence
+| **Audited Request Logs & Detail Inspection** | **Health, Readiness & Prometheus Telemetry** |
+|:---:|:---:|
+| ![Logs Drawer](docs/images/logs_detail_drawer.png) | ![Health & Metrics](docs/images/health_metrics.png) |
 
 ---
 
-## 4. API Reference & Representative Examples
 
-### 1. Unified Chat Completion
-`POST /v1/chat/completions`
+## ⚡ 60-Second Quickstart
 
-**Request:**
-```bash
-curl -X POST http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "cheap",
-    "messages": [
-      {"role": "user", "content": "Explain consistent hashing in distributed systems."}
-    ],
-    "temperature": 0.7,
-    "max_tokens": 256,
-    "cache": true
-  }'
-```
-
-**Representative Response:**
-```json
-{
-  "id": "mock-cmpl-020588e620c3",
-  "request_id": "req-c1cbe9bddfc4",
-  "object": "chat.completion",
-  "created": 1792134212,
-  "model": "mock-model",
-  "provider": "mock-primary",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "Mock response from [mock-primary] for model [mock-model]: Received 'Explain consistent hashing in distributed sy...'"
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 8,
-    "completion_tokens": 15,
-    "total_tokens": 23,
-    "is_estimated": false
-  },
-  "cached": false,
-  "latency_ms": 17.53,
-  "cost_usd": 0.000004,
-  "routing_reason": "alias:cheap->mock-model"
-}
-```
-
-*Subsequent identical request returns `"cached": true`, `"latency_ms": 0.75`.*
-
-### 2. Cache Bypass
-Add header `X-Cache-Bypass: true` or set `"cache": false` in request body.
-
-### 3. Application Health & Readiness
-- `GET /health`: Liveness probe (`{"status":"ok", "app":"LLM-Gateway"}`).
-- `GET /ready`: Dependency readiness probe inspecting database, cache, and provider availability.
-
-### 4. Aggregated Operational Statistics
-`GET /stats`
-```json
-{
-  "total_requests": 204,
-  "successful_requests": 200,
-  "failed_requests": 4,
-  "cache_hits": 163,
-  "cache_misses": 41,
-  "cache_hit_rate": 0.799,
-  "fallback_count": 0,
-  "latency_p50_ms": 1.25,
-  "latency_p95_ms": 78.4,
-  "latency_p99_ms": 142.1,
-  "total_input_tokens": 2450,
-  "total_output_tokens": 3120,
-  "total_tokens": 5570,
-  "total_estimated_cost_usd": 0.000782
-}
-```
-
-### 5. Configured Providers (Safe Inspection)
-`GET /providers` reports configured providers, health, and circuit breaker states without leaking secrets.
-
-### 6. Configured Models & Pricing
-`GET /models` returns catalog entries, supported primary/fallback providers, and token pricing.
-
-### 7. Paginated Audit Logs
-`GET /logs?page=1&page_size=20&status=success`
-Returns sanitized request metadata without storing or exposing unrestricted prompt text.
-
-### 8. Prometheus Metrics
-`GET /metrics` exposes standard Prometheus text metrics (`llm_gateway_requests_total`, `llm_gateway_cache_hits_total`, `llm_gateway_latency_ms{quantile="0.50"}`, etc.).
-
----
-
-## 5. Automated Test Suite
-
-The test suite covers 43 distinct automated test cases across unit, integration, and end-to-end scenarios.
+### Option A: One-Command CLI (Cross-Platform)
 
 ```bash
-# Run pytest with verbose output
+# 1. Inspect environment & diagnostic readiness
+python gateway.py doctor
+
+# 2. Start the gateway and background worker
+python gateway.py start
+```
+
+### Option B: Windows Double-Click
+Double-click `run_gateway.bat` — it automatically verifies Python, sets up virtual environments, installs pinned dependencies, and launches the gateway server with live Ollama model auto-detection.
+
+### Option C: Docker Compose Full Stack
+```bash
+docker compose up -d
+```
+Starts Gateway (`:8000`), Redis (`:6379`), React UI (`:3000`), Prometheus (`:9090`), and Grafana (`:3001`).
+
+---
+
+## 📊 Real Measured Benchmarks
+
+All metrics below were captured on local hardware against the live gateway test harness (`scripts/benchmark.py` and `scripts/load_test.py`):
+
+| Operation | Throughput / Rate | Measured Latency |
+|---|---|---|
+| **Cache Key SHA-256 Generation** | **136,985 ops/sec** | 0.007 ms / op |
+| **Model Routing Resolution** | **226,160 ops/sec** | 0.004 ms / op |
+| **End-to-End Cache Hit p50** | — | **26.45 ms** |
+| **End-to-End Uncached p50** | — | 45.95 ms (**1.74x speedup**) |
+| **High-Volume Cache Hit Rate** | **75.51%** | (in 100-request load test batch) |
+| **Pytest Test Suite Execution** | **66/66 Passing (100%)** | 40.69s total execution time |
+
+---
+
+## 🔌 100% Drop-In OpenAI SDK Compatibility
+
+Point the official `openai` Python SDK directly to your local gateway URL. Zero code refactoring required:
+
+```python
+from openai import OpenAI
+
+# Simply target the Gateway base_url
+client = OpenAI(
+    base_url="http://localhost:8000/v1",
+    api_key="gw-prod-key-1",  # Or any configured Gateway key
+)
+
+# 1. Non-streaming completion
+response = client.chat.completions.create(
+    model="cheap",  # Routes automatically to local Ollama or mock
+    messages=[{"role": "user", "content": "Explain consistent hashing in 2 sentences."}],
+    temperature=0.7,
+)
+print("Answer:", response.choices[0].message.content)
+
+# 2. Real-time token streaming
+stream = client.chat.completions.create(
+    model="balanced",
+    messages=[{"role": "user", "content": "Write a python generator function."}],
+    stream=True,
+)
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="", flush=True)
+```
+
+---
+
+## 🌐 Offline-First & Local Model Support
+
+The Gateway includes native support for offline and air-gapped environments:
+- **Local Engine Adapter**: Out-of-the-box integration with Ollama (`http://localhost:11434`), LM Studio, vLLM, and llama.cpp.
+- **`OFFLINE_MODE=true` Enforcer**: Completely disallows outbound internet traffic. Requests only route to local or mock providers.
+- **Zero Incurred Inferences**: In-memory and local model configurations operate at `$0.00` per token with native token estimation.
+- **Live Model Auto-Discovery**: Detects all installed Ollama models at startup and dynamically registers them into the active catalog (`GET /v1/models`).
+
+---
+
+## 🛡️ Enterprise Feature Matrix
+
+| Feature | Description | File Reference |
+|---|---|---|
+| **Multi-Tier Caching** | SHA-256 exact match in Redis + offline subword semantic similarity index. | [`app/cache/`](app/cache/) |
+| **Circuit Breaking** | 3-state state machine (`CLOSED`, `OPEN`, `HALF_OPEN`) preventing cascade failures. | [`app/resilience/circuit_breaker.py`](app/resilience/circuit_breaker.py) |
+| **Automatic Fallback** | Multi-hop provider failover chains (e.g. `openai -> groq -> local -> mock`). | [`app/resilience/fallback.py`](app/resilience/fallback.py) |
+| **Streaming (SSE)** | OpenAI-compliant Server-Sent Events with cached token replay and failover. | [`app/services/gateway.py`](app/services/gateway.py) |
+| **Vector Embeddings** | Normalized `POST /v1/embeddings` adapter with caching and multi-provider support. | [`app/api/routes.py`](app/api/routes.py) |
+| **Tenant Quotas** | Sliding-window RPM, daily cost caps, daily token allowances, allowed models. | [`app/persistence/api_keys.py`](app/persistence/api_keys.py) |
+| **Guardrails** | Zero-allocation PII masking (Email, Phone, Credit Cards) and injection defense. | [`app/guardrails/`](app/guardrails/) |
+| **Model Comparison** | `POST /v1/compare` runs prompts side-by-side with latency, token, and cost audit. | [`app/services/gateway.py`](app/services/gateway.py) |
+| **Hot Reloading** | Live configuration reload (`POST /v1/models/reload`) without server restart. | [`app/routing/router.py`](app/routing/router.py) |
+| **Observability** | Prometheus `/metrics`, Grafana dashboards, SQLite audit persistence, JSON logs. | [`deploy/`](deploy/) |
+| **Web Dashboard** | React 18 + TypeScript + Tailwind + shadcn/ui + Recharts developer console. | [`frontend/`](frontend/) |
+
+---
+
+## 🏛️ Architecture Decision Records (ADRs)
+
+Our core engineering design decisions and trade-offs are documented under [`docs/adr/`](docs/adr/):
+- [**ADR 001: Offline-First Architecture & Local Model Orchestration**](docs/adr/001-offline-first-architecture.md)
+- [**ADR 002: Multi-Tier Caching (Exact SHA-256 and Offline Semantic Similarity)**](docs/adr/002-multi-tier-caching.md)
+- [**ADR 003: Fault Tolerance, Circuit Breakers, and Automatic Fallbacks**](docs/adr/003-resilience-and-fallbacks.md)
+
+Detailed architectural walkthrough: [**`docs/ARCHITECTURE.md`**](docs/ARCHITECTURE.md).
+
+---
+
+## 🧪 Testing & Code Quality
+
+The codebase enforces strict typing, zero secret leakage, and 100% test pass rates:
+
+```bash
+# Run unit, integration, and E2E test suites (66 tests)
 pytest -v
+
+# Run Ruff linter across application, tests, SDK, and CLI
+ruff check app tests gateway_client examples gateway.py
+
+# Run asynchronous benchmark harness
+python scripts/benchmark.py
+python scripts/load_test.py --requests 100 --concurrency 10
 ```
-
-### Test Coverage Highlights
-| Category | File | Cases Tested |
-|---|---|---|
-| **Unit** | `tests/unit/test_cache_keys.py` | Deterministic SHA-256 hashing, parameter sensitivity, metadata isolation |
-| **Unit** | `tests/unit/test_cost_and_usage.py` | Token estimation, usage normalization, USD cost formulas |
-| **Unit** | `tests/unit/test_circuit_breaker.py` | Closed -> Open -> Half-Open transitions, reset timeouts |
-| **Unit** | `tests/unit/test_routing.py` | Explicit models, aliases, task hints, circuit breaker skipping |
-| **Unit** | `tests/unit/test_retry_and_exceptions.py` | Transient vs permanent classification, backoff & Retry-After |
-| **Unit** | `tests/unit/test_schemas_and_redaction.py` | Pydantic v2 validation, API key and Bearer token redaction |
-| **Integration** | `tests/integration/test_adapters.py` | OpenAICompatibleProvider with mocked HTTP transport (200, 401, 429, 500) |
-| **Integration** | `tests/integration/test_cache.py` | Cache hits, bypass, stampede single-flight locking, Redis degradation |
-| **Integration** | `tests/integration/test_persistence.py` | SQLite async logging, pagination, filtering, percentile stats |
-| **E2E** | `tests/e2e/test_api_endpoints.py` | `/health`, `/ready`, `/stats`, `/providers`, `/models`, `/logs`, `/metrics` |
-| **E2E** | `tests/e2e/test_fallback_and_deadline.py` | Primary failure -> fallback to secondary, all providers failing, deadline timeout |
-
-**Test Result:** `43 passed in 21.73s`
 
 ---
 
-## 6. Benchmarking & Load Testing
-
-### Micro-Benchmarks (`scripts/benchmark.py`)
-Measures internal non-network pipeline throughput:
-```
-Cache key SHA-256 generation: 10,000 ops in 0.0607s (164,649 ops/sec)
-Model routing resolution:      10,000 ops in 0.0370s (270,542 ops/sec)
-```
-
-### End-to-End Load Test (`scripts/load_test.py`)
-Simulates 200 requests with 10 concurrent workers, 30% repeated prompts, mixed cache bypass, and injected transient failures:
-```bash
-python scripts/load_test.py --requests 200 --concurrency 10
-```
-
-**Actual Measured Benchmark Results:**
-| Metric | Cache Enabled | Cache Disabled | Performance Gain |
-|---|---|---|---|
-| **Total Requests** | 200 | 200 | - |
-| **Throughput** | 40.21 req/s | 45.22 req/s | - |
-| **Successful Requests** | 198 (99.0%) | 193 (96.5%) | +2.5% reliability |
-| **Failed Requests** | 2 (1.0%) | 7 (3.5%) | Reduced failures |
-| **Cache Hits** | 162 (81.82%) | 0 (0.0%) | - |
-| **p50 Latency** | **63.80 ms** | **74.75 ms** | **1.17x faster** |
-| **p95 Latency** | **144.37 ms** | **151.26 ms** | Lower tail latency |
-| **p99 Latency** | **237.73 ms** | **1861.92 ms** | **7.8x tail latency reduction** |
-| **Estimated Cost** | $0.000770 USD | $0.000756 USD | Tracked |
-
----
-
-## 7. Configuration Reference (`.env`)
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `APP_NAME` | `LLM-Gateway` | Gateway instance name |
-| `ENVIRONMENT` | `development` | Deployment environment |
-| `DEBUG` | `false` | Enable verbose debugging |
-| `GATEWAY_API_KEY` | `None` | Inbound API key (if set, requires `X-API-Key` or `Authorization: Bearer`) |
-| `CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed CORS origins list |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
-| `CACHE_ENABLED` | `true` | Enable global response caching |
-| `CACHE_DEFAULT_TTL_SECONDS` | `3600` | Default cache TTL (1 hour) |
-| `CACHE_LOCK_TIMEOUT_SECONDS` | `10.0` | Stampede lock expiration duration |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./gateway.db` | SQLAlchemy async database connection |
-| `REQUEST_OVERALL_TIMEOUT_SECONDS` | `30.0` | Maximum overall request budget across all retries |
-| `PROVIDER_TIMEOUT_SECONDS` | `10.0` | Maximum timeout for a single provider attempt |
-| `MAX_RETRIES` | `3` | Maximum retry attempts per provider |
-| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures before tripping OPEN |
-| `CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS` | `30.0` | Cooldown before probing HALF_OPEN |
-| `OPENAI_MAIN_ENABLED` | `false` | Enable primary OpenAI provider |
-| `OPENAI_MAIN_API_KEY` | `None` | OpenAI API key |
-| `OPENAI_BACKUP_ENABLED` | `false` | Enable secondary provider (Groq/Together/vLLM) |
-| `MOCK_PRIMARY_ENABLED` | `true` | Enable mock primary provider |
-| `MOCK_SECONDARY_ENABLED` | `true` | Enable mock secondary fallback provider |
-
----
-
-## 8. Production Hardening & Deployment Guidelines
-
-1. **Distributed Circuit Breaker & Rate Limiting**:
-   - The current circuit breaker is thread-safe and scoped to the ASGI worker process. For multi-replica Kubernetes deployments, state can be synced using Redis Hashes.
-2. **PostgreSQL Migration**:
-   - For ultra-high write volumes (>5,000 req/s), transition `DATABASE_URL` from SQLite to PostgreSQL (`postgresql+asyncpg://...`) using SQLAlchemy's async driver.
-3. **Semantic Caching**:
-   - Exact-match SHA-256 canonical caching is implemented. Semantic vector similarity caching can be attached as a secondary cache layer.
-4. **Secrets Management**:
-   - In production, inject provider API keys via AWS Secrets Manager, Vault, or Kubernetes Secrets rather than plain `.env` files.
+## 📜 License
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.

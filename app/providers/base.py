@@ -27,3 +27,7 @@ class BaseProvider(ABC):
     async def health_check(self) -> bool:
         """Checks if the provider endpoint is healthy and reachable."""
         pass
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """Generates embedding vectors for a list of input strings."""
+        raise NotImplementedError(f"Provider '{self.name}' does not support embeddings.")

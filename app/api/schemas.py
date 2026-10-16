@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -37,6 +37,9 @@ class ChatCompletionRequest(BaseModel):
     cache: Optional[bool] = Field(
         default=True, description="Enable or bypass Redis caching for this request"
     )
+    stream: Optional[bool] = Field(
+        default=False, description="Enable Server-Sent Events (SSE) streaming"
+    )
     task_type: Optional[str] = Field(
         default=None, description="Optional hint for routing rules (e.g. summarization, coding)"
     )
@@ -50,6 +53,22 @@ class ChatCompletionRequest(BaseModel):
         if not messages:
             raise ValueError("messages list must contain at least one message")
         return messages
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "model": "balanced",
+                "messages": [
+                    {"role": "system", "content": "You are a concise technical architect."},
+                    {"role": "user", "content": "Explain single-flight cache locking in one sentence."},
+                ],
+                "temperature": 0.7,
+                "max_tokens": 128,
+                "cache": True,
+                "task_type": "chat",
+            }
+        }
+    }
 
 
 class UsageInfo(BaseModel):
@@ -132,6 +151,7 @@ class ReadyResponse(BaseModel):
 
     status: str
     dependencies: Dict[str, DependencyStatus]
+    offline_mode: bool = False
 
 
 class ProviderSummary(BaseModel):
@@ -203,3 +223,67 @@ class PaginatedLogsResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class EmbeddingRequest(BaseModel):
+    """Normalized OpenAI-compatible embedding request payload."""
+
+    input: Union[str, List[str]] = Field(..., description="String or array of strings to embed")
+    model: str = Field(default="text-embedding-3-small", description="Model to use for embedding")
+    user: Optional[str] = None
+    encoding_format: Optional[str] = "float"
+
+
+class EmbeddingData(BaseModel):
+    """Individual embedding vector result."""
+
+    object: str = "embedding"
+    index: int
+    embedding: List[float]
+
+
+class EmbeddingResponse(BaseModel):
+    """Normalized embedding response payload."""
+
+    object: str = "list"
+    data: List[EmbeddingData]
+    model: str
+    usage: Dict[str, int]
+    cached: bool = False
+
+
+class CompareRequest(BaseModel):
+    """Request payload for multi-model concurrent comparison."""
+
+    models: List[str] = Field(..., min_length=2, max_length=5, description="List of 2-5 models to compare")
+    messages: List[ChatMessage] = Field(..., min_length=1, description="Messages to send to each model")
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 512
+
+
+class ModelComparisonResult(BaseModel):
+    """Side-by-side comparison result for one model."""
+
+    model: str
+    provider: str
+    content: str
+    latency_ms: float
+    tokens: int
+    cost_usd: float
+    cached: bool
+    error: Optional[str] = None
+
+
+class CompareResponse(BaseModel):
+    """Aggregated side-by-side comparison response."""
+
+    prompt: str
+    results: List[ModelComparisonResult]
+
+
+class ReloadModelsResponse(BaseModel):
+    """Response returned after hot-reloading models.yaml."""
+
+    status: str
+    models_count: int
+    message: str
